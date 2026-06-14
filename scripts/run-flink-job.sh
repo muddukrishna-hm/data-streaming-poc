@@ -10,5 +10,7 @@ docker compose exec -T jobmanager bash /opt/flink/job/submit-remote.sh
 
 echo ""
 echo "Job submitted to the Docker Flink cluster."
-echo "  Flink UI:  http://localhost:8081  (Running Jobs)"
-echo "  Output:    docker compose logs -f taskmanager"
+echo "  Flink UI:     http://localhost:8081  (Running Jobs)"
+echo "  Events file:  events/events.jsonl"
+echo "  Send event:   bash scripts/send-event.sh auth 200"
+echo "  Output:       docker compose logs -f taskmanager"

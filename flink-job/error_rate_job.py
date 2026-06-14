@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PyFlink job: consume API response events, compute 60s error rates, emit alerts."""
+"""PyFlink job: read events from a JSONL file, compute 60s error rates, emit alerts."""
 
 from __future__ import annotations
 
@@ -9,10 +9,9 @@ import sys
 from pathlib import Path
 
 from pyflink.common import Configuration, Duration, Time, Types, WatermarkStrategy
-from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import TimestampAssigner
 from pyflink.datastream import RuntimeExecutionMode, StreamExecutionEnvironment
-from pyflink.datastream.connectors.kafka import FlinkKafkaConsumer
+from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 from pyflink.datastream.functions import (
     AggregateFunction,
     KeySelector,
@@ -26,16 +25,15 @@ from models import ApiEvent, ErrorMetric
 
 JOB_DIR = Path(__file__).resolve().parent
 REPO_ROOT = JOB_DIR.parent
-JAR_DIR = JOB_DIR / "jars"
 CONFIG_PATH = Path(os.environ.get("THRESHOLDS_PATH", REPO_ROOT / "config" / "thresholds.json"))
+EVENTS_PATH = os.environ.get("EVENTS_PATH", "/opt/flink/events/events.jsonl")
 
-KAFKA_TOPIC = os.environ.get("KAFKA_TOPIC", "api-response-events")
-KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 FLINK_REST_HOST = os.environ.get("FLINK_REST_HOST", "localhost")
 FLINK_REST_PORT = int(os.environ.get("FLINK_REST_PORT", "8081"))
 EXECUTION_TARGET = os.environ.get("EXECUTION_TARGET", "remote")
 WINDOW_SECONDS = int(os.environ.get("WINDOW_SECONDS", "60"))
 WATERMARK_DELAY_SECONDS = int(os.environ.get("WATERMARK_DELAY_SECONDS", "5"))
+FILE_POLL_SECONDS = int(os.environ.get("FILE_POLL_SECONDS", "1"))
 
 EVENT_TYPE = Types.PICKLED_BYTE_ARRAY()
 
@@ -95,15 +93,6 @@ class ErrorMetricEmitter(ProcessWindowFunction):
         )
 
 
-def jar_uris() -> list[str]:
-    jars = sorted(JAR_DIR.glob("*.jar"))
-    if not jars:
-        raise RuntimeError(
-            f"No connector JARs in {JAR_DIR}. Run: bash scripts/download-jars.sh"
-        )
-    return [f"file://{path.resolve()}" for path in jars]
-
-
 def build_env() -> StreamExecutionEnvironment:
     config = Configuration()
     config.set_string("pipeline.name", "api-error-rate-monitor")
@@ -113,7 +102,6 @@ def build_env() -> StreamExecutionEnvironment:
         config.set_string("python.executable", "/usr/local/bin/python")
         config.set_string("python.client.executable", "/usr/local/bin/python")
     else:
-        # "cluster" (flink run -py) or legacy "remote" client submission
         config.set_string("python.execution-mode", "process")
         config.set_string("python.executable", "/usr/bin/python3")
         config.set_string("python.client.executable", "/usr/bin/python3")
@@ -128,24 +116,26 @@ def build_env() -> StreamExecutionEnvironment:
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(2)
-    env.add_jars(*jar_uris())
     return env
 
 
 def build_pipeline(env: StreamExecutionEnvironment) -> None:
-    properties = {
-        "bootstrap.servers": KAFKA_BOOTSTRAP,
-        "group.id": "api-error-rate-monitor",
-        "auto.offset.reset": "latest",
-    }
-    consumer = FlinkKafkaConsumer(
-        topics=KAFKA_TOPIC,
-        deserialization_schema=SimpleStringSchema(),
-        properties=properties,
+    file_source = (
+        FileSource.for_record_stream_format(
+            StreamFormat.text_line_format(),
+            EVENTS_PATH,
+        )
+        .monitor_continuously(Duration.of_seconds(FILE_POLL_SECONDS))
+        .build()
     )
-    consumer.set_start_from_latest()
 
-    source = env.add_source(consumer)
+    source = env.from_source(
+        file_source,
+        WatermarkStrategy.no_watermarks(),
+        "file-events",
+        Types.STRING(),
+    ).set_parallelism(1)
+
     events = source.map(ParseApiEvent(), output_type=EVENT_TYPE)
 
     watermark_strategy = (
@@ -175,6 +165,10 @@ def build_pipeline(env: StreamExecutionEnvironment) -> None:
 def main() -> None:
     if not CONFIG_PATH.exists():
         raise SystemExit(f"Missing thresholds config: {CONFIG_PATH}")
+
+    events_file = Path(EVENTS_PATH)
+    if not events_file.exists():
+        raise SystemExit(f"Missing events file: {EVENTS_PATH}")
 
     sys.path.insert(0, str(JOB_DIR))
     env = build_env()
