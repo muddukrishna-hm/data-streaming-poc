@@ -1,0 +1,9 @@
+{
+  "default_threshold": 0.05,
+  "services": {
+    "auth": 0.03,
+    "order": 0.05,
+    "pay": 0.02,
+    "notif": 0.10
+  }
+}

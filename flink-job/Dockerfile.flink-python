@@ -1,0 +1,20 @@
+FROM flink:1.18-scala_2.12-java11
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip unzip \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && pip3 install --no-cache-dir \
+        py4j==0.10.9.7 \
+        protobuf==3.20.3 \
+        grpcio==1.51.3 \
+        cloudpickle==2.2.1 \
+        apache-beam==2.48.0 \
+        avro-python3==1.10.2 \
+    && mkdir -p /opt/flink/opt/python/pyflink \
+    && unzip -q /opt/flink/opt/python/pyflink.zip -d /opt/flink/opt/python/pyflink \
+    && chmod +x /opt/flink/opt/python/pyflink/pyflink/bin/*.sh \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONPATH=/opt/flink/opt/python/pyflink

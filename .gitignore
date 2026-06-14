@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Flink connector JARs (downloaded via script)
+flink-job/jars/*.jar
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
