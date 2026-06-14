@@ -1,0 +1,1 @@
+Build a proof-of-concept Apache Flink application that continuously processes API response events, aggregates error metrics in real time, and generates alerts when a service exceeds a predefined error threshold within a specified time window. help me with desing
